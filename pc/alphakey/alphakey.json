@@ -1,0 +1,11 @@
+{
+  "file_format_version": "1.0.0",
+  "api_layer": {
+    "name": "XR_APILAYER_frame_alphakey",
+    "library_path": "./frame_alphakey.dll",
+    "api_version": "1.0",
+    "implementation_version": "1",
+    "description": "ALPHA_BLEND for PC SteamVR + Steam Frame: transparent pixels become the Frame keyer's key colour",
+    "disable_environment": "DISABLE_FRAME_ALPHAKEY"
+  }
+}

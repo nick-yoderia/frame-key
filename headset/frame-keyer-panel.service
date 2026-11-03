@@ -1,0 +1,17 @@
+[Unit]
+Description=Frame Key dashboard panel: passthrough for Steam Link streams 
+# Needs SteamVR's IPC; starts and stops with SteamVR.
+After=steamvr.service
+PartOf=steamvr.service
+Requisite=steamvr.service
+
+[Service]
+Environment=XDG_CONFIG_HOME=%h/.config
+ExecStart=@PANEL@
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=5
+MemoryMax=512M
+
+[Install]
+WantedBy=steamvr.service
