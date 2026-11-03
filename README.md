@@ -181,8 +181,8 @@ The release zip has everything prebuilt. To build it yourself:
 
 - **PC**: Visual Studio 2022 or its Build Tools (C++ workload, Windows SDK),
   the [OpenVR SDK](https://github.com/ValveSoftware/openvr) and the
-  [OpenXR loader](https://www.nuget.org/packages/OpenXR.Loader) nupkg
-  (unzipped). `pc\build.ps1 -OpenVR <dir> -OpenXR <dir>`.
+  [OpenXR loader](https://github.com/KhronosGroup/OpenXR-SDK-Source/releases)
+  (`openxr_loader_windows-<version>.zip`, unzipped). `pc\build.ps1 -OpenVR <dir> -OpenXR <dir>`.
 - **Headset**: built on a Frame in Developer Mode with its own compilers.
   SteamOS ships without the headers, so put the OpenVR SDK in `~/sdk/openvr`
   and [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) in

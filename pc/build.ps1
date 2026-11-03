@@ -2,7 +2,8 @@
 # C++ workload and a Windows 10/11 SDK; no vcvars needed).
 #   .\build.ps1 -OpenVR C:\path\to\openvr -OpenXR C:\path\to\openxr
 #     OpenVR: headers\, lib\win64\, bin\win64\ (from ValveSoftware/openvr)
-#     OpenXR: include\, native\x64\release\{lib,bin}\ (OpenXR.Loader nupkg, unzipped)
+#     OpenXR: include\, x64\{lib,bin}\ (openxr_loader_windows-<ver>.zip from
+#             KhronosGroup/OpenXR-SDK-Source releases, unzipped)
 param([Parameter(Mandatory)] [string]$OpenVR, [Parameter(Mandatory)] [string]$OpenXR)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -16,7 +17,9 @@ $kv = (Get-ChildItem "$kit\Include" | Sort-Object Name | Select-Object -Last 1).
 $env:INCLUDE = "$msvc\include;$kit\Include\$kv\ucrt;$kit\Include\$kv\um;$kit\Include\$kv\shared"
 $env:LIB = "$msvc\lib\x64;$kit\Lib\$kv\ucrt\x64;$kit\Lib\$kv\um\x64"
 $cl = "$msvc\bin\Hostx64\x64\cl.exe"
-$xrlib = "$OpenXR\native\x64\release"
+$xrlib = "$OpenXR\x64"
+if (-not (Test-Path "$xrlib\lib\openxr_loader.lib")) { $xrlib = "$OpenXR\native\x64\release" } # older nupkg layout
+if (-not (Test-Path "$xrlib\lib\openxr_loader.lib")) { throw "No x64\lib\openxr_loader.lib under $OpenXR." }
 New-Item -ItemType Directory -Force build | Out-Null
 
 function Build($argv) { & $cl /nologo /O2 /EHsc /std:c++17 /W3 /D_CRT_SECURE_NO_WARNINGS @argv; if ($LASTEXITCODE) { exit $LASTEXITCODE } }

@@ -2,7 +2,8 @@
 # Build both sides and zip a release (run on the Windows PC, in Git Bash).
 #   OPENVR_SDK=... OPENXR_SDK=... sh tools/make-release.sh v0.1.0-alpha
 # OPENVR_SDK: ValveSoftware/openvr (headers/, lib/win64/, bin/win64/)
-# OPENXR_SDK: the OpenXR.Loader nupkg, unzipped (include/, native/x64/release/)
+# OPENXR_SDK: openxr_loader_windows-<ver>.zip from KhronosGroup/OpenXR-SDK-Source
+#   releases, unzipped (include/, x64/)
 # The headset side is built on a Frame over ssh (FRAME_HOST, default "frame"),
 # which needs ~/sdk/openvr and ~/sdk/Vulkan-Headers (SteamOS strips its own headers).
 set -eu
