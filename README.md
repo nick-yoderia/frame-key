@@ -195,7 +195,9 @@ The release zip has everything prebuilt. To build it yourself:
 - Anything near the key colour in a game also turns into passthrough
   (magenta is rare). OpenXR apps through the PC layer are protected: their
   own content is kept away from the key.
-- Tied to this SteamVR's compositor shaders (SteamOS 0.5.6). The headset
+- Tied to SteamVR's compositor shaders: knows those of SteamOS 0.5.6 and
+  0.5.7. If a later SteamVR update changes them, keying stays off (the panel
+  shows "last change failed") instead of drawing a broken picture. The headset
   installer checks the stream shader first and refuses if a SteamVR update
   changed it; if only the native-app shaders changed, it says so and keys PC
   streams only.

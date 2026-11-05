@@ -20,13 +20,31 @@ mkdir -p "$DATA"
 
 reload() { LD_LIBRARY_PATH=$VR timeout 10 $VR/vrcmd --reload-shaders >/dev/null 2>&1 || true; }
 blend() { ./$BIN/vrsetting camera forceSceneAlphaBlending "$1"; }
+OVERRIDES="se2 alphaed achromatic fsharp"
+# Remove every keyed copy (and the stock shader each was made from).
+unkey() { for n in $OVERRIDES; do rm -f "$DATA/$n.spv" "$DATA/$n.stock.spv"; done; }
 # keyed copy of one compositor shader: key NAME STOCKFILE ARGS...
+# Next to it goes a copy of the stock shader it was made from: the layer only
+# hands over the keyed copy while SteamVR's shader is still that one, since a
+# copy made for an older SteamVR reads inputs the new compositor doesn't provide
+# (SteamOS 0.5.7 turned the stream green that way).
 key() {
 	n=$1 f=$2
 	shift 2
-	spirv-dis "$SHADERS/$f" -o "$DATA/orig_$n.spvasm"
-	python3 gen_key.py "$DATA/orig_$n.spvasm" "$DATA/$n.new.spv" "$@" >/dev/null
+	rm -f "$DATA/$n.spv" "$DATA/$n.stock.spv"
+	spirv-dis "$SHADERS/$f" -o "$DATA/orig_$n.spvasm" || return 1
+	python3 gen_key.py "$DATA/orig_$n.spvasm" "$DATA/$n.new.spv" "$@" >/dev/null || return 1
+	cp "$SHADERS/$f" "$DATA/$n.stock.spv" || return 1
 	mv "$DATA/$n.new.spv" "$DATA/$n.spv"
+}
+# The stream shader can't be keyed: leave the compositor stock and say so.
+fail() {
+	unkey
+	rm -f "$DATA/stamp" "$DATA/mode"
+	blend remove
+	reload
+	echo "stream shader not recognised (SteamVR update?): keying stays off" >&2
+	exit 1
 }
 
 case "${1:-status}" in
@@ -41,11 +59,12 @@ build)
 	g++ -std=c++17 -O2 -Wall -Wno-missing-field-initializers -I"$SDK/openvr/headers" -I"$SDK/Vulkan-Headers/include" \
 		-I/usr/include/freetype2 panel.cpp vkshare.cpp -o build/frame-keyer-panel \
 		-Lbuild -lopenvr_api -lvulkan -lfreetype -lpthread -Wl,-rpath,'$ORIGIN'
-	# test app (native OpenXR: key colour with a grey square); needs the OpenXR loader in ~/sdk/prefix
+	# test app (native OpenXR: key colour with a grey square); needs the OpenXR loader in ~/sdk/prefix.
+	# Not shipped, so a failed build only warns (a loader built on an older SteamOS can stop linking).
 	if [ -d "$SDK/prefix/include/openxr" ]; then
 		g++ -std=c++17 -O2 -Wall -Wno-missing-field-initializers -I"$SDK/Vulkan-Headers/include" \
 			-I"$SDK/prefix/include" xrkeytest.cpp -o build/xrkeytest "$SDK/prefix/lib/libopenxr_loader.so" \
-			-lvulkan -Wl,-rpath,"$SDK/prefix/lib"
+			-lvulkan -Wl,-rpath,"$SDK/prefix/lib" || echo "xrkeytest not built (test app only)" >&2
 	fi
 	echo built ;;
 chroma)
@@ -63,9 +82,9 @@ chroma)
 		exit 0
 	fi
 	rm -f "$DATA/stamp"
-	key se2 distort_ps_achromatic_se2.spv chroma
+	unkey
+	key se2 distort_ps_achromatic_se2.spv chroma || fail
 	# native apps get the same key
-	rm -f "$DATA/alphaed.spv" "$DATA/achromatic.spv" "$DATA/fsharp.spv"
 	key alphaed distort_ps_achromatic_alphaed.spv chroma || echo "native apps not keyed (shader changed?)" >&2
 	key achromatic distort_ps_achromatic.spv chroma || echo "native apps without alpha not keyed (shader changed?)" >&2
 	key fsharp fsharp_vr_ps.spv chroma || echo "native apps' sharp circle not keyed (shader changed?)" >&2
@@ -75,15 +94,17 @@ chroma)
 	reload
 	echo "keying: chroma $*" ;;
 rect)
-	key se2 distort_ps_achromatic_se2.spv "$@"
 	# a stream-only test
-	rm -f "$DATA/alphaed.spv" "$DATA/achromatic.spv" "$DATA/fsharp.spv"
+	unkey
+	rm -f "$DATA/stamp"
+	key se2 distort_ps_achromatic_se2.spv "$@" || fail
 	echo "$*" > "$DATA/mode"
 	blend true
 	reload
 	echo "keying: $*" ;;
 off)
-	rm -f "$DATA/se2.spv" "$DATA/alphaed.spv" "$DATA/achromatic.spv" "$DATA/fsharp.spv" "$DATA/mode" "$DATA/params"
+	unkey
+	rm -f "$DATA/mode" "$DATA/params"
 	blend remove
 	reload
 	echo off ;;

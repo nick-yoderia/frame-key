@@ -433,6 +433,15 @@ static VkResult swap(PFN_vkCreateShaderModule next, VkDevice dev, const VkShader
 			logf("%s: stock%s", name, repl.empty() ? "" : " (override file is not SPIR-V)");
 			break;
 		}
+		// keyer.sh keeps the stock shader each copy was made from. A copy made
+		// for another SteamVR reads inputs this compositor doesn't provide (the
+		// SteamOS 0.5.7 update showed a green, half-blocked stream that way), so
+		// it is only used while the stock shader is still that one.
+		std::vector<char> from = readFile(home("/.local/share/frame-keyer/") + name + ".stock.spv");
+		if (from != st) {
+			logf("%s: stock (keyed copy was made for another SteamVR shader; run keyer.sh chroma again)", name);
+			break;
+		}
 		VkShaderModuleCreateInfo mci = *ci;
 		mci.pCode = (const uint32_t *)repl.data();
 		mci.codeSize = repl.size();
