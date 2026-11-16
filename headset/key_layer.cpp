@@ -1,14 +1,14 @@
 // VK_LAYER_FRAME_KEYER: Vulkan layer for vrcompositor on the Steam Frame.
 //
-// The Steam Link stream reaches vrcompositor as NV12 video, which has no alpha,
-// and the shader that draws it (distort_ps_achromatic_se2) writes alpha = 1.
 // Native Frame apps are drawn by distort_ps_achromatic_alphaed (or _achromatic)
 // plus fsharp_vr_ps (the sharp circle where you look). When
-// ~/.local/share/frame-keyer/se2.spv (alphaed.spv, ...) exists, this layer hands
-// the compositor that file instead of the stock shader: a copy patched by
-// gen_key.py that writes alpha < 1 where the picture shows the key colour.
-// With camera/forceSceneAlphaBlending on, the compositor then blends its own
-// passthrough in wherever scene alpha < 1. Camera pixels never pass through us.
+// ~/.local/share/frame-keyer/alphaed.spv (achromatic.spv, fsharp.spv) exists,
+// this layer hands the compositor that file instead of the stock shader: a copy
+// patched by gen_key.py that writes alpha < 1 where the picture shows the key
+// colour. With camera/forceSceneAlphaBlending on, the compositor then blends
+// its own passthrough in wherever scene alpha < 1. Camera pixels never pass
+// through us. The Steam Link stream's shaders are never swapped: SteamOS 0.5.9
+// keys PC streams itself.
 //
 // The key colour and sliders aren't in those shaders: they read them from push
 // constants. We give every pipeline layout of the compositor (none of its own
@@ -45,7 +45,6 @@ static const char *kDir = "/opt/steamvr/resources/shaders/vulkan/";
 static const struct Target {
 	const char *stock, *ours;
 } kTargets[] = {
-	{"distort_ps_achromatic_se2.spv", "se2"},       // Steam Link stream
 	{"distort_ps_achromatic_alphaed.spv", "alphaed"}, // native apps
 	{"distort_ps_achromatic.spv", "achromatic"},     // native apps without alpha
 	{"fsharp_vr_ps.spv", "fsharp"},                   // native apps, sharp eye-tracked circle
@@ -241,23 +240,19 @@ static const std::vector<char> &stockCode(size_t t) {
 	return stock[t];
 }
 
-// Settings as push constants. The params file is a 16-byte header ("FKP1"),
-// then one block for the stream and one for native apps (gen_key.py PC).
+// Settings as push constants. The params file is a 16-byte header ("FKP2"),
+// then one block of floats (gen_key.py PC).
 static const uint32_t kPcBytes = 64;
 static std::unordered_map<uint64_t, size_t> g_keyedMods; // keyed VkShaderModule -> kTargets index
 static std::unordered_set<uint64_t> g_pcLayouts;          // layouts we gave our range
-struct KeyedPipe {
-	VkPipelineLayout layout;
-	int block; // 0 stream, 1 native apps
-};
-static std::unordered_map<uint64_t, KeyedPipe> g_keyedPipes;
-static char g_params[16 + 2 * kPcBytes];
+static std::unordered_map<uint64_t, VkPipelineLayout> g_keyedPipes; // keyed VkPipeline -> its layout
+static char g_params[16 + kPcBytes];
 // Without a params file, settings that key nothing (gen_key.py HOLD).
 static void holdParams() {
 	static const float hold[] = {0, 0, 1, 0, -1000, 1, -1001, -1000, 0};
 	memset(g_params, 0, sizeof g_params);
-	memcpy(g_params, "FKP1", 4);
-	for (int b = 0; b < 2; b++) memcpy(g_params + 16 + kPcBytes * b, hold, sizeof hold);
+	memcpy(g_params, "FKP2", 4);
+	memcpy(g_params + 16, hold, sizeof hold);
 }
 // Current settings; the file is checked at most every 200 ms. Call with g_m held.
 static const char *params() {
@@ -282,7 +277,7 @@ static const char *params() {
 		return g_params;
 	seen = st;
 	std::vector<char> v = readFile(p);
-	if (v.size() >= sizeof g_params && !memcmp(v.data(), "FKP1", 4)) {
+	if (v.size() >= sizeof g_params && !memcmp(v.data(), "FKP2", 4)) {
 		memcpy(g_params, v.data(), sizeof g_params);
 		logf("params updated");
 	} else {
@@ -314,7 +309,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreatePipelineLayout(VkDevice dev, const V
 static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice dev, VkPipelineCache c, uint32_t n,
 	const VkGraphicsPipelineCreateInfo *ci, const VkAllocationCallbacks *a, VkPipeline *out) {
 	Device d;
-	std::vector<int> block(n, -1);
+	std::vector<bool> keyed(n, false);
 	std::vector<std::pair<uint32_t, uint32_t>> fallback; // (pipeline, stage) needing the stock shader
 	{
 		std::lock_guard<std::mutex> l(g_m);
@@ -323,7 +318,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice dev, VkPi
 			for (uint32_t s = 0; s < ci[i].stageCount; s++) {
 				auto it = g_keyedMods.find((uint64_t)ci[i].pStages[s].module);
 				if (it == g_keyedMods.end()) continue;
-				if (g_pcLayouts.count((uint64_t)ci[i].layout)) block[i] = it->second == 0 ? 0 : 1;
+				if (g_pcLayouts.count((uint64_t)ci[i].layout)) keyed[i] = true;
 				else fallback.push_back({i, s});
 			}
 	}
@@ -359,7 +354,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL CreateGraphicsPipelines(VkDevice dev, VkPi
 	std::lock_guard<std::mutex> l(g_m);
 	for (uint32_t i = 0; i < n; i++) {
 		if (!out[i]) continue;
-		if (block[i] >= 0) g_keyedPipes[(uint64_t)out[i]] = {ci[i].layout, block[i]};
+		if (keyed[i]) g_keyedPipes[(uint64_t)out[i]] = ci[i].layout;
 		else g_keyedPipes.erase((uint64_t)out[i]);
 	}
 	if (!tracing()) return r;
@@ -399,8 +394,8 @@ static VKAPI_ATTR void VKAPI_CALL CmdBindPipeline(VkCommandBuffer cb, VkPipeline
 		auto kp = bp == VK_PIPELINE_BIND_POINT_GRAPHICS ? g_keyedPipes.find((uint64_t)p) : g_keyedPipes.end();
 		if (kp != g_keyedPipes.end()) {
 			push = d.CmdPushConstants;
-			layout = kp->second.layout;
-			memcpy(data, params() + 16 + kPcBytes * kp->second.block, kPcBytes);
+			layout = kp->second;
+			memcpy(data, params() + 16, kPcBytes);
 		}
 		if (tracing()) {
 			auto it = g_pipes.find((uint64_t)p);
@@ -434,9 +429,8 @@ static VkResult swap(PFN_vkCreateShaderModule next, VkDevice dev, const VkShader
 			break;
 		}
 		// keyer.sh keeps the stock shader each copy was made from. A copy made
-		// for another SteamVR reads inputs this compositor doesn't provide (the
-		// SteamOS 0.5.7 update showed a green, half-blocked stream that way), so
-		// it is only used while the stock shader is still that one.
+		// for another SteamVR reads inputs this compositor doesn't provide, so it
+		// is only used while the stock shader is still that one.
 		std::vector<char> from = readFile(home("/.local/share/frame-keyer/") + name + ".stock.spv");
 		if (from != st) {
 			logf("%s: stock (keyed copy was made for another SteamVR shader; run keyer.sh chroma again)", name);

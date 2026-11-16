@@ -22,12 +22,10 @@ foreach ($f in $need) {
 
 $state = Join-Path $env:LOCALAPPDATA "frame-key"
 $last = Join-Path $state "last-headset.txt"
-$oldLast = Join-Path $env:LOCALAPPDATA "frame-pcvr-passthrough\last-headset.txt"
 New-Item -ItemType Directory -Force $state | Out-Null
-if (-not (Test-Path $last) -and (Test-Path $oldLast)) { Copy-Item $oldLast $last }
 
-# Headsets that already run the Frame Key panel answer a UDP broadcast
-# (the same one the PC layer uses), so an update finds them by itself.
+# Headsets that already run the Frame Key panel answer a UDP broadcast, so an
+# update finds them by itself.
 function Find-Headsets {
 	$found = @{}
 	$udp = New-Object System.Net.Sockets.UdpClient 0

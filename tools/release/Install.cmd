@@ -1,13 +1,10 @@
 @echo off
 setlocal
-rem Frame Key: installs the PC side, then the headset side. Double-click to run.
-rem Run again to update. pc\install-pc.ps1 or pc\install-headset.ps1 alone do one side.
-if not exist "%~dp0pc\install-pc.ps1" goto notextracted
+rem Frame Key: installs the headset side on a Steam Frame over SSH. Double-click to run.
+rem Run again to update. Also removes the PC side that releases before 0.7 installed.
+if not exist "%~dp0pc\install-headset.ps1" goto notextracted
 if not exist "%~dp0headset\install-headset.sh" goto notextracted
-echo == PC side
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pc\install-pc.ps1" || goto fail
-echo.
-echo == Headset side
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pc\remove-pc-side.ps1" || goto fail
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pc\install-headset.ps1" || goto fail
 echo.
 echo Done. In the headset: SteamVR dashboard ^> Frame Key.

@@ -1,36 +1,21 @@
 #!/bin/sh
-# Build both sides and zip a release (run on the Windows PC, in Git Bash).
-#   OPENVR_SDK=... OPENXR_SDK=... sh tools/make-release.sh v0.1.0-alpha
-# OPENVR_SDK: ValveSoftware/openvr (headers/, lib/win64/, bin/win64/)
-# OPENXR_SDK: openxr_loader_windows-<ver>.zip from KhronosGroup/OpenXR-SDK-Source
-#   releases, unzipped (include/, x64/)
-# The headset side is built on a Frame over ssh (FRAME_HOST, default "frame"),
-# which needs ~/sdk/openvr and ~/sdk/Vulkan-Headers (SteamOS strips its own headers).
+# Build and zip a release (run on the Windows PC, in Git Bash).
+#   sh tools/make-release.sh v0.7.0-alpha
+# Everything is built on a Frame over ssh (FRAME_HOST, default "frame"), which
+# needs ~/sdk/openvr and ~/sdk/Vulkan-Headers (SteamOS strips its own headers).
+# The PC only gets the scripts that install it from there.
 set -eu
-VER=${1:?version, e.g. v0.1.0-alpha}
+VER=${1:?version, e.g. v0.7.0-alpha}
 H=${FRAME_HOST:-frame}
 cd "$(dirname "$0")/.."
 OUT=dist/frame-key-$VER
 rm -rf "$OUT" && mkdir -p "$OUT/pc" "$OUT/headset/bin"
 
-PCFILES="FrameKey.exe frame_alphakey.dll keybox.exe xralphatest.exe openvr_api.dll openxr_loader.dll"
-# Remove the last build's outputs first, so a failed step can't ship a stale file.
-for f in $PCFILES; do rm -f "pc/build/$f"; done
-LOG=$(mktemp)
-if ! powershell -NoProfile -ExecutionPolicy Bypass -File pc/build.ps1 -OpenVR "$(cygpath -w "$OPENVR_SDK")" \
-	-OpenXR "$(cygpath -w "$OPENXR_SDK")" >"$LOG" 2>&1; then
-	cat "$LOG"
-	rm -f "$LOG"
-	echo "PC build failed" >&2
-	exit 1
-fi
-grep -vE '^\s*\S+\.cpp\s*$|Creating library' "$LOG" || true # cl's per-file chatter
-rm -f "$LOG"
-for f in $PCFILES; do cp "pc/build/$f" "$OUT/pc/"; done
-cp pc/alphakey/alphakey.json pc/alphakey/alphakey.ini pc/install-pc.ps1 pc/install-headset.ps1 "$OUT/pc/"
+cp pc/install-headset.ps1 pc/remove-pc-side.ps1 "$OUT/pc/"
 
 R='~/dev/frame-key'
-tar -cf - headset | ssh "$H" "rm -rf $R && mkdir -p $R && tar -xf - -C $R && cd $R/headset && sh keyer.sh build >/dev/null"
+tar -cf - --exclude=__pycache__ --exclude=build headset |
+	ssh "$H" "rm -rf $R && mkdir -p $R && tar -xf - -C $R && cd $R/headset && sh keyer.sh build >/dev/null"
 for f in frame-keyer-panel vrsetting libopenvr_api.so; do scp -q "$H:$R/headset/build/$f" "$OUT/headset/bin/"; done
 scp -q "$H:$R/headset/build/libVkLayer_frame_keyer.so" "$OUT/headset/"
 cp headset/install-headset.sh headset/uninstall-headset.sh headset/keyer.sh headset/gen_key.py \

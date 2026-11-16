@@ -1,4 +1,5 @@
-// frame-keyer-panel: SteamVR dashboard panel for the chroma keyer.
+// frame-keyer-panel: SteamVR dashboard panel for the chroma keyer (native Frame
+// apps; PC streams are keyed by SteamVR itself).
 // On/off, key colour (presets or any hue), tolerance, edge softness, spill.
 // Changes are applied through keyer.sh while you drag (a settings change only
 // rewrites a small file, no shader reload), and kept in
@@ -19,10 +20,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <arpa/inet.h>
-#include <dirent.h>
 #include <fcntl.h>
 #include <netinet/in.h>
-#include <set>
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -164,7 +163,7 @@ static void apply(const Settings &s, bool save = true) {
 // ---------------------------------------------------------------- eyedropper
 // SteamVR mirrors the headset view (level, centred, 1920x1080 RGB) to
 // /dev/video99 while something reads it. Keying is paused while picking, so the
-// mirror shows only the PC stream and overlays, never the cameras.
+// mirror shows only the app and overlays, never the cameras.
 static std::atomic<int> g_pick{0}; // 0 idle, 1 sampling, 2 got a colour, 3 failed
 static float g_pickRgb[3];
 static void pickWorker() {
@@ -196,74 +195,11 @@ static void pickWorker() {
 	g_pick = placeholder ? 3 : 2;
 }
 
-static bool streaming() { // is a Steam Link (vrlink) stream running?
-	DIR *d = opendir("/proc");
-	if (!d) return false;
-	bool found = false;
-	while (dirent *e = readdir(d)) {
-		if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-		char p[300], comm[32] = {};
-		snprintf(p, sizeof p, "/proc/%s/comm", e->d_name);
-		if (FILE *f = fopen(p, "r")) {
-			if (fgets(comm, sizeof comm, f) && !strncmp(comm, "vrlink", 6)) found = true;
-			fclose(f);
-		}
-		if (found) break;
-	}
-	closedir(d);
-	return found;
-}
-
 // ---------------------------------------------------------------- LAN discovery
-// PCs on the network ask "FPPQ1" by UDP broadcast to port 47911; we answer with
-// who we are and the key settings, so the PC layer keys the same colour. The
-// PC asks first, so Windows' firewall lets our answer through without rules.
-// "toyou=1" when the asking PC is the one our Steam Link stream comes from.
+// The installer on a PC asks "FPPQ1" by UDP broadcast to port 47911 to find
+// headsets that run Frame Key (updates); we answer with who we are. The PC asks
+// first, so Windows' firewall lets our answer through without rules.
 static const int kLanPort = 47911;
-
-// Remote IPv4 addresses of vrlink's connected sockets (the PC it streams from).
-static std::set<uint32_t> vrlinkPeers() {
-	std::set<uint64_t> inodes;
-	DIR *d = opendir("/proc");
-	if (!d) return {};
-	while (dirent *e = readdir(d)) {
-		if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-		std::string base = std::string("/proc/") + e->d_name;
-		char comm[32] = {};
-		if (FILE *f = fopen((base + "/comm").c_str(), "r")) {
-			if (!fgets(comm, sizeof comm, f)) comm[0] = 0;
-			fclose(f);
-		}
-		if (strncmp(comm, "vrlink", 6)) continue;
-		if (DIR *fd = opendir((base + "/fd").c_str())) {
-			while (dirent *fe = readdir(fd)) {
-				char link[64] = {};
-				ssize_t n = readlink((base + "/fd/" + fe->d_name).c_str(), link, sizeof link - 1);
-				unsigned long long ino;
-				if (n > 0 && sscanf(link, "socket:[%llu]", &ino) == 1) inodes.insert(ino);
-			}
-			closedir(fd);
-		}
-	}
-	closedir(d);
-	std::set<uint32_t> peers;
-	for (const char *table : {"/proc/net/udp", "/proc/net/tcp"}) {
-		FILE *f = fopen(table, "r");
-		if (!f) continue;
-		char line[512];
-		if (!fgets(line, sizeof line, f)) { fclose(f); continue; } // header
-		while (fgets(line, sizeof line, f)) {
-			unsigned rem, remPort;
-			unsigned long long ino;
-			// sl local_address rem_address st tx:rx tr:when retrnsmt uid timeout inode
-			if (sscanf(line, " %*d: %*x:%*x %x:%x %*x %*x:%*x %*x:%*x %*x %*u %*u %llu", &rem, &remPort, &ino) == 3 &&
-				rem && inodes.count(ino))
-				peers.insert(rem); // network byte order, as in sockaddr_in
-		}
-		fclose(f);
-	}
-	return peers;
-}
 
 static std::string hostName() {
 	char h[128] = {};
@@ -282,8 +218,6 @@ static std::string machineId() {
 
 struct Lan {
 	int fd = -1;
-	std::set<uint32_t> peers;
-	double peersAt = -10;
 	bool open() {
 		fd = socket(AF_INET, SOCK_DGRAM, 0);
 		if (fd < 0) return false;
@@ -304,7 +238,7 @@ struct Lan {
 	}
 	bool showAsked = false; // "FPPSHOW" from this machine: a second start (app list) wants the panel shown
 
-	void serve(const Settings &s, bool stream, double now) {
+	void serve() {
 		if (fd < 0) return;
 		char buf[64];
 		sockaddr_in from;
@@ -314,15 +248,8 @@ struct Lan {
 			buf[n] = 0;
 			if (!strcmp(buf, "FPPSHOW") && from.sin_addr.s_addr == htonl(INADDR_LOOPBACK)) showAsked = true;
 			if (strncmp(buf, "FPPQ1", 5)) continue;
-			if (now - peersAt > 2) peers = vrlinkPeers(), peersAt = now;
-			float r, g, b;
-			keyColour(s, r, g, b);
-			char reply[512];
-			int len = snprintf(reply, sizeof reply,
-				"FPPA1\nid=%s\nname=%s\non=%d\nkey=%.4f %.4f %.4f\ntolerance=%.3f\nsoftness=%.3f\nspill=%.2f\n"
-				"streaming=%d\ntoyou=%d\n",
-				machineId().c_str(), hostName().c_str(), s.on, r, g, b, s.tol, s.soft, s.spill, stream,
-				stream ? (peers.count(from.sin_addr.s_addr) ? 1 : peers.empty() ? -1 : 0) : 0);
+			char reply[256];
+			int len = snprintf(reply, sizeof reply, "FPPA1\nid=%s\nname=%s\n", machineId().c_str(), hostName().c_str());
 			sendto(fd, reply, len, 0, (sockaddr *)&from, fl);
 			fl = sizeof from;
 		}
@@ -430,7 +357,7 @@ static const Slider kSliders[] = {
 };
 static const Box kQuit = {796, 772, 976, 820};
 
-static void drawPanel(Canvas &cv, const Settings &s, bool stream, bool applying, bool failed, bool picking = false,
+static void drawPanel(Canvas &cv, const Settings &s, bool applying, bool failed, bool picking = false,
 	const char *note = nullptr) {
 	cv.clear(kBg);
 	cv.text(48, 80, 40, "Frame Key", kText, true);
@@ -440,8 +367,7 @@ static void drawPanel(Canvas &cv, const Settings &s, bool stream, bool applying,
 	cv.circle(kx, (kToggle.y0 + kToggle.y1) / 2, 26, kText);
 	cv.textRight(kToggle.x0 - 18, 78, 28, s.on ? "On" : "Off", s.on ? kText : kDim, true);
 
-	std::string status = stream ? "PC stream connected" : "No PC stream";
-	status += s.on ? "  -  keying" : "  -  off";
+	std::string status = s.on ? "Keying apps on this headset" : "Off";
 	if (applying) status += "  -  applying...";
 	else if (failed) status += "  -  last change failed";
 	if (note) status += std::string("  -  ") + note;
@@ -453,7 +379,7 @@ static void drawPanel(Canvas &cv, const Settings &s, bool stream, bool applying,
 	char hex[16];
 	snprintf(hex, sizeof hex, "#%02X%02X%02X", (int)std::lround(r * 255), (int)std::lround(g * 255),
 		(int)std::lround(b * 255));
-	cv.textRight(976, 180, 24, std::string("Use ") + hex + " on the PC", kDim);
+	cv.textRight(976, 180, 24, hex, kDim);
 	for (int i = 0; i <= kCustom; i++) {
 		Box bx = swatch(i);
 		float pr, pg, pb;
@@ -548,7 +474,7 @@ int main(int argc, char **argv) {
 		if (!cv.initFonts()) return 1;
 		Settings s = loadSettings();
 		if (argc > 3) s.on = true, s.preset = atoi(argv[3]);
-		drawPanel(cv, s, true, false, false);
+		drawPanel(cv, s, false, false);
 		FILE *f = fopen(argv[2], "wb");
 		if (!f) return 1;
 		fprintf(f, "P6\n%d %d\n255\n", W, H);
@@ -617,7 +543,6 @@ int main(int argc, char **argv) {
 	Settings s = loadSettings();
 	g_confSeen = confMtime();
 	if (s.on) apply(s, false); // make the keyer match the saved switch (it may have been turned off elsewhere)
-	bool stream = streaming();
 	Lan lan;
 	if (!lan.open()) fprintf(stderr, "LAN discovery off (port %d busy?)\n", kLanPort);
 	bool dirty = true, wasApplying = false;
@@ -734,17 +659,16 @@ int main(int argc, char **argv) {
 		double t = now();
 		if (t > nextStatus) {
 			nextStatus = t + 1.0;
-			// The PC app writes panel.conf and applies the change itself; just show it.
+			// panel.conf edited from outside (by hand, over ssh): show and apply it.
 			time_t m = confMtime();
 			if (m != g_confSeen && dragging < 0 && pickAt == 0) {
 				g_confSeen = m;
 				s = loadSettings();
+				apply(s, false);
 				dirty = true;
-				printf("settings changed on disk (PC app): %s\n", s.on ? "on" : "off");
+				printf("settings changed on disk: %s\n", s.on ? "on" : "off");
 				fflush(stdout);
 			}
-			bool st = streaming();
-			if (st != stream) stream = st, dirty = true;
 		}
 		if (pickAt > 0) {
 			int count = (int)std::ceil(pickAt - t);
@@ -781,12 +705,12 @@ int main(int argc, char **argv) {
 		bool applying = g_applying;
 		if (applying != wasApplying) wasApplying = applying, dirty = true;
 		if (dirty && ov->IsDashboardVisible()) {
-			drawPanel(cv, s, stream, applying, g_applyFailed, pickAt > 0, note.empty() ? nullptr : note.c_str());
+			drawPanel(cv, s, applying, g_applyFailed, pickAt > 0, note.empty() ? nullptr : note.c_str());
 			vk.upload(tex, cv.px.data());
 			vk.setOverlay(main, tex);
 			dirty = false;
 		}
-		lan.serve(s, stream, t);
+		lan.serve();
 		std::this_thread::sleep_for(std::chrono::milliseconds(ov->IsDashboardVisible() ? 11 : 100));
 	}
 	// Hide and clear before destroying (see vkshare.h).

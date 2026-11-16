@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install the headset side on the Steam Frame (run on the Frame, from the
 # unpacked release's headset/ folder, or let Install.cmd on the PC do it):
-#   - the compositor layer that keys the Steam Link stream
+#   - the compositor layer that keys native apps (PC streams are left alone)
 #   - the "Frame Key" panel in the SteamVR dashboard, started with SteamVR
 # Everything goes under your home folder; nothing in /usr or /opt is touched.
 #   sh install-headset.sh            install and restart SteamVR (closes running VR apps)
@@ -12,32 +12,32 @@ D=$HOME/.local/share/frame-keyer
 CONF=$HOME/.config/frame-keyer
 MANIFEST=$HOME/.local/share/vulkan/implicit_layer.d/frame-keyer.json
 UNIT=$HOME/.config/systemd/user/frame-keyer-panel.service
-SHADER=/opt/steamvr/resources/shaders/vulkan/distort_ps_achromatic_se2.spv
+SHADERS=/opt/steamvr/resources/shaders/vulkan
 
 say() { printf '%s\n' "$*"; }
 [ "$(uname -m)" = aarch64 ] || { say "This is for the Steam Frame (aarch64); this machine is $(uname -m)."; exit 1; }
-[ -f "$SHADER" ] || { say "SteamVR's stream shader isn't where expected ($SHADER)."; exit 1; }
+[ -d "$SHADERS" ] || { say "SteamVR's shaders aren't where expected ($SHADERS)."; exit 1; }
 for t in spirv-dis spirv-as spirv-val python3; do
 	command -v $t >/dev/null || { say "Missing $t (SteamOS normally has it)."; exit 1; }
 done
 command -v ffmpeg >/dev/null || say "Note: no ffmpeg, so the panel's eyedropper won't work."
 
-# This SteamVR's shader must match what the keyer knows how to patch.
+# This SteamVR's shaders for native apps must match what the keyer knows how to patch.
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-spirv-dis "$SHADER" -o "$T/se2.spvasm"
-if ! python3 gen_key.py "$T/se2.spvasm" "$T/test.spv" chroma 1 0 1 >/dev/null 2>"$T/err"; then
-	say "This SteamVR version's stream shader changed; the keyer can't patch it:"
-	cat "$T/err"
-	say "Look for a newer Frame Key release; your SteamVR is unchanged."
-	exit 1
-fi
-# Native apps' shader: keying them is a bonus, so a mismatch only warns.
-spirv-dis "${SHADER%_se2.spv}_alphaed.spv" -o "$T/alphaed.spvasm" 2>/dev/null &&
-	python3 gen_key.py "$T/alphaed.spvasm" "$T/test2.spv" chroma 0 1 0 >/dev/null 2>&1 ||
-	say "Note: this SteamVR's shader for native apps changed, so only PC streams get keyed."
+for f in distort_ps_achromatic_alphaed distort_ps_achromatic fsharp_vr_ps; do
+	if ! spirv-dis "$SHADERS/$f.spv" -o "$T/$f.spvasm" 2>"$T/err" ||
+		! python3 gen_key.py "$T/$f.spvasm" "$T/$f.spv" chroma >/dev/null 2>>"$T/err"; then
+		say "This SteamVR version's $f shader changed; the keyer can't patch it:"
+		cat "$T/err"
+		say "Look for a newer Frame Key release; your SteamVR is unchanged."
+		exit 1
+	fi
+done
 
 systemctl --user stop frame-keyer-panel.service 2>/dev/null || true
+# Releases before 0.7 also keyed the Steam Link stream; drop that keyed copy.
+rm -f "$D/se2.spv" "$D/se2.stock.spv" "$D/orig_se2.spvasm" "$D/se2.new.spv.spvasm"
 mkdir -p "$D/bin" "$CONF" "$(dirname "$MANIFEST")" "$(dirname "$UNIT")"
 install -m 755 bin/frame-keyer-panel bin/vrsetting "$D/bin/"
 install -m 644 bin/libopenvr_api.so "$D/bin/"
@@ -52,7 +52,7 @@ cat > "$MANIFEST" <<EOF
     "library_path": "$D/libVkLayer_frame_keyer.so",
     "api_version": "1.4.309",
     "implementation_version": "1",
-    "description": "Chroma-key passthrough for Steam Link streams (vrcompositor only)",
+    "description": "Chroma-key passthrough for native apps (vrcompositor only)",
     "functions": { "vkNegotiateLoaderLayerInterfaceVersion": "keyer_NegotiateLoaderLayerInterfaceVersion" },
     "disable_environment": { "DISABLE_FRAME_KEYER": "1" }
   }
@@ -70,7 +70,7 @@ cat > "$HOME/.local/share/applications/frame-keyer.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Frame Key
-Comment=Passthrough keying for PC VR streams; opens its SteamVR dashboard panel
+Comment=Passthrough keying for apps on the Frame; opens its SteamVR dashboard panel
 Exec=$D/bin/frame-keyer-panel --show
 Icon=frame-keyer
 Categories=Utility;

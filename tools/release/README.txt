@@ -1,16 +1,14 @@
 Frame Key
 =========
 
-See-through spots in PC VR games streamed to a Steam Frame over Steam Link,
-and in native apps on the Frame. Anything drawn in the key colour (magenta
-by default) shows the Frame's passthrough camera instead, for example
-Reality Mixer's "solid color" boxes, or the green screen behind a 360 video
-(set the key to Green). OpenXR apps on the PC that ask for transparency
-(ALPHA_BLEND) work too.
+See-through spots in apps running on a Steam Frame. Anything an app draws in
+the key colour shows the Frame's passthrough camera instead, for example the
+green screen behind a 360 or 3D video (set the key to Green).
 
-Using Reality Mixer with SteamVR 2.19 or later? Also install
-realitymixer-foveation-fix, or its boxes fade out away from where you look:
-  https://github.com/nick-yoderia/realitymixer-foveation-fix
+PC VR streams are not touched: since SteamOS 0.5.9, SteamVR keys Steam Link
+streams itself (on the PC: SteamVR settings > Camera, mode Key Content).
+Frame Key releases before 0.7 keyed the stream and installed an OpenXR layer
+on the PC; Install.cmd removes that.
 
 Before you install (once)
 -------------------------
@@ -23,9 +21,9 @@ Before you install (once)
 Install
 -------
   Extract this zip to a folder, then double-click Install.cmd. It installs
-  the PC side (no admin, "Frame Key" in the Start menu), then the headset
-  side over SSH: it asks for the Frame's address and, the first time only,
-  its password. SteamVR on the Frame restarts at the end.
+  Frame Key on the headset over SSH: it asks for the Frame's address and,
+  the first time only, its password. SteamVR on the Frame restarts at the
+  end. Nothing is installed on the PC.
   To update, run the new release's Install.cmd; settings are kept.
 
 Use
@@ -36,17 +34,9 @@ Use
   Tolerance / Edge softness / Spill removal (each explained on the panel).
   Quit turns keying off and closes the panel; it starts again with SteamVR
   or from the Frame's app list (+ > Frame Key).
-  The PC follows the headset on its own over your network (no SSH needed
-  after installing). Start menu > Frame Key shows which headset this
-  PC follows, switches the PC layer on/off and shows a test box.
-  Paint what should be see-through in the key colour.
 
-  Reality Mixer: Camera Setup > Use Solid Color on, then set the panel to
-  the same colour (use the Eyedropper on one of its boxes). Its own
-  ChromaKey setting isn't used. A box needs an activation option to show;
-  for an always-on window pick activation by distance with minimum and
-  maximum opacity both at 100%. Boxes that fade with distance only fade the
-  passthrough over the first part of the fade. Details in README.md.
+  Green-screen video: Green suits bright computer-made green; for a filmed
+  green screen use the Eyedropper on it. Details in README.md on GitHub.
 
   While keying is On, SteamVR's "camera at room edge" passthrough doesn't
   show, and native games' colours close to the key turn see-through too.
@@ -56,9 +46,9 @@ Remove
 ------
   Uninstall.cmd
 
-Unofficial: this patches the Frame's compositor shader in memory (nothing in
-/opt is changed). A SteamVR update can change that shader; the headset
-installer checks first and refuses if it can't patch the new one.
+Unofficial: this patches the Frame's compositor shaders in memory (nothing in
+/opt is changed). A SteamVR update can change those shaders; the installer
+checks first and refuses if it can't patch the new ones.
 
 Credits: builds on steam-frame-chroma-key by spyjacob (MIT), which the
 panel's design and parts of its code come from:
